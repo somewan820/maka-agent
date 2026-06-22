@@ -148,7 +148,11 @@ describe('isolated headless tools', () => {
       async exec(input) {
         calls.push(input.command);
         try {
-          const { stdout, stderr } = await execAsync(input.command, { cwd: input.cwd, maxBuffer: 1024 * 1024 });
+          const { stdout, stderr } = await execAsync(input.command, {
+            cwd: input.cwd,
+            env: { ...process.env, PATH: '/usr/bin:/bin' },
+            maxBuffer: 1024 * 1024,
+          });
           return { exitCode: 0, stdout, stderr };
         } catch (error: any) {
           return {
@@ -180,7 +184,8 @@ describe('isolated headless tools', () => {
     });
     assert.equal(await readFile(join(cwd, 'src/file.txt'), 'utf8'), 'hi\nneedle\n');
     assert.ok(calls.length >= 5);
-    assert.ok(calls.every((command) => command.startsWith("node -e '")));
+    assert.ok(calls.every((command) => command.startsWith("sh -c '")));
+    assert.ok(calls.every((command) => !command.includes('node -e')));
   });
 
   test('command-backed file tools do not follow symlinks outside the isolated workspace', async () => {
@@ -192,7 +197,11 @@ describe('isolated headless tools', () => {
     const tools = buildIsolatedHeadlessTools({
       async exec(input) {
         try {
-          const { stdout, stderr } = await execAsync(input.command, { cwd: input.cwd, maxBuffer: 1024 * 1024 });
+          const { stdout, stderr } = await execAsync(input.command, {
+            cwd: input.cwd,
+            env: { ...process.env, PATH: '/usr/bin:/bin' },
+            maxBuffer: 1024 * 1024,
+          });
           return { exitCode: 0, stdout, stderr };
         } catch (error: any) {
           return {

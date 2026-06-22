@@ -78,7 +78,7 @@ export function buildIsolatedReadTool(executor: IsolatedToolExecutor): MakaTool 
     impl: async ({ path, offset, limit }, { cwd }) => {
       const normalizedPath = normalizeWorkspacePath(path, cwd, 'Read path');
       if (executor.readFile) return await executor.readFile({ cwd, path: normalizedPath, offset, limit });
-      const stdout = await execFileCommand(executor, cwd, nodeFileCommand(READ_SCRIPT, [
+      const stdout = await execFileCommand(executor, cwd, shellFileCommand(READ_SCRIPT, [
         normalizedPath,
         numberArg(offset),
         numberArg(limit),
@@ -97,9 +97,9 @@ export function buildIsolatedWriteTool(executor: IsolatedToolExecutor): MakaTool
     impl: async ({ path, content }, { cwd }) => {
       const normalizedPath = normalizeWorkspacePath(path, cwd, 'Write path');
       if (executor.writeFile) return await executor.writeFile({ cwd, path: normalizedPath, content });
-      await execFileCommand(executor, cwd, nodeFileCommand(WRITE_SCRIPT, [
+      await execFileCommand(executor, cwd, shellFileCommand(WRITE_SCRIPT, [
         normalizedPath,
-        Buffer.from(content, 'utf8').toString('base64'),
+        content,
       ]));
       return { ok: true, path: normalizedPath, bytes: Buffer.byteLength(content, 'utf8') };
     },
@@ -121,10 +121,10 @@ export function buildIsolatedEditTool(executor: IsolatedToolExecutor): MakaTool 
       if (executor.editFile) {
         return await executor.editFile({ cwd, path: normalizedPath, oldString: old_string, newString: new_string });
       }
-      await execFileCommand(executor, cwd, nodeFileCommand(EDIT_SCRIPT, [
+      await execFileCommand(executor, cwd, shellFileCommand(EDIT_SCRIPT, [
         normalizedPath,
-        Buffer.from(old_string, 'utf8').toString('base64'),
-        Buffer.from(new_string, 'utf8').toString('base64'),
+        old_string,
+        new_string,
       ]));
       return { ok: true, path: normalizedPath, replacements: 1 };
     },
@@ -144,11 +144,12 @@ export function buildIsolatedGlobTool(executor: IsolatedToolExecutor): MakaTool 
       const normalizedPattern = normalizeWorkspaceGlobPattern(pattern, cwd, 'Glob pattern');
       const normalizedRelCwd = relCwd === undefined ? undefined : normalizeWorkspacePath(relCwd, cwd, 'Glob cwd');
       if (executor.globFiles) return await executor.globFiles({ cwd, pattern: normalizedPattern, searchCwd: normalizedRelCwd });
-      const stdout = await execFileCommand(executor, cwd, nodeFileCommand(GLOB_SCRIPT, [
+      const stdout = await execFileCommand(executor, cwd, shellFileCommand(GLOB_SCRIPT, [
         normalizedPattern,
+        globPatternToEre(normalizedPattern),
         normalizedRelCwd ?? '',
       ]));
-      return { files: parseStringArray(stdout, 'Glob') };
+      return { files: parseLineArray(stdout) };
     },
   };
 }
@@ -172,12 +173,13 @@ export function buildIsolatedGrepTool(executor: IsolatedToolExecutor): MakaTool 
         path: normalizedPath,
         glob: normalizedGlob,
       });
-      const stdout = await execFileCommand(executor, cwd, nodeFileCommand(GREP_SCRIPT, [
+      const stdout = await execFileCommand(executor, cwd, shellFileCommand(GREP_SCRIPT, [
         pattern,
         normalizedPath ?? '',
         normalizedGlob ?? '',
+        normalizedGlob === undefined ? '' : globPatternToEre(normalizedGlob),
       ]));
-      return { matches: parseStringArray(stdout, 'Grep') };
+      return { matches: parseLineArray(stdout) };
     },
   };
 }
@@ -190,8 +192,8 @@ async function execFileCommand(executor: IsolatedToolExecutor, cwd: string, comm
   return result.stdout;
 }
 
-function nodeFileCommand(script: string, args: string[]): string {
-  return ['node', '-e', shellQuote(script), '--', ...args.map(shellQuote)].join(' ');
+function shellFileCommand(script: string, args: string[]): string {
+  return ['sh', '-c', shellQuote(script), '--', ...args.map(shellQuote)].join(' ');
 }
 
 function shellQuote(value: string): string {
@@ -202,12 +204,32 @@ function numberArg(value: number | undefined): string {
   return value === undefined ? '' : String(value);
 }
 
-function parseStringArray(stdout: string, label: string): string[] {
-  const parsed: unknown = JSON.parse(stdout || '[]');
-  if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === 'string')) {
-    throw new Error(`${label} command returned an invalid string array`);
+function parseLineArray(stdout: string): string[] {
+  if (!stdout) return [];
+  return stdout.replace(/\n$/, '').split('\n').filter((line) => line.length > 0);
+}
+
+function globPatternToEre(pattern: string): string {
+  let output = '^';
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    const next = pattern[i + 1];
+    if (ch === '*' && next === '*') {
+      output += '.*';
+      i += 1;
+    } else if (ch === '*') {
+      output += '[^/]*';
+    } else if (ch === '?') {
+      output += '[^/]';
+    } else {
+      output += escapeEreChar(ch);
+    }
   }
-  return parsed;
+  return `${output}$`;
+}
+
+function escapeEreChar(ch: string): string {
+  return /[\\.^$+{}()[\]|]/.test(ch) ? `\\${ch}` : ch;
 }
 
 function normalizeWorkspacePath(inputPath: string, cwd: string, label: string): string {
@@ -253,132 +275,163 @@ function assertNormalizedRelativePath(inputPath: string, label: string): string 
   return inputPath;
 }
 
-const COMMON_NODE_HELPERS = String.raw`
-const fs = require('fs');
-const path = require('path');
-function inside(root, target) {
-  const rel = path.relative(root, target);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+const COMMON_SHELL_HELPERS = String.raw`
+fail() {
+  printf '%s\n' "$1" >&2
+  exit 1
 }
-function workspaceRoot() {
-  return fs.realpathSync(process.cwd());
+
+inside_workspace() {
+  case "$root" in
+    /)
+      case "$1" in /*) return 0 ;; esac
+      ;;
+    *)
+      case "$1" in "$root"|"$root"/*) return 0 ;; esac
+      ;;
+  esac
+  return 1
 }
-function existingTarget(root, inputPath, label) {
-  const target = fs.realpathSync(path.resolve(root, inputPath));
-  if (!inside(root, target)) throw new Error(label + ' must stay inside workspace');
-  return target;
+
+existing_target() {
+  input_path=$1
+  label=$2
+  target=$root/$input_path
+  [ -L "$target" ] && fail "$label must stay inside workspace"
+  [ -e "$target" ] || fail "$label does not exist: $input_path"
+  if [ -d "$target" ]; then
+    real=$(cd -P "$target" 2>/dev/null && pwd -P) || fail "$label must stay inside workspace"
+  else
+    parent=$(dirname "$target")
+    base=$(basename "$target")
+    parent_real=$(cd -P "$parent" 2>/dev/null && pwd -P) || fail "$label must stay inside workspace"
+    real=$parent_real/$base
+  fi
+  inside_workspace "$real" || fail "$label must stay inside workspace"
+  printf '%s\n' "$real"
 }
-function writableTarget(root, inputPath, label) {
-  const target = path.resolve(root, inputPath);
-  const parent = fs.realpathSync(path.dirname(target));
-  if (!inside(root, parent)) throw new Error(label + ' must stay inside workspace');
-  try {
-    const existing = fs.realpathSync(target);
-    if (!inside(root, existing)) throw new Error(label + ' must stay inside workspace');
-  } catch (error) {
-    if (!error || error.code !== 'ENOENT') throw error;
-  }
-  return target;
+
+writable_target() {
+  input_path=$1
+  label=$2
+  target=$root/$input_path
+  parent=$(dirname "$target")
+  base=$(basename "$target")
+  parent_real=$(cd -P "$parent" 2>/dev/null && pwd -P) || fail "$label must stay inside workspace"
+  inside_workspace "$parent_real" || fail "$label must stay inside workspace"
+  real=$parent_real/$base
+  [ -L "$real" ] && fail "$label must stay inside workspace"
+  printf '%s\n' "$real"
 }
 `;
 
-const READ_SCRIPT = `${COMMON_NODE_HELPERS}
-const [inputPath, offsetRaw, limitRaw] = process.argv.slice(1);
-const root = workspaceRoot();
-const target = existingTarget(root, inputPath, 'Read path');
-let content = fs.readFileSync(target, 'utf8');
-if (offsetRaw || limitRaw) {
-  const lines = content.split('\\n');
-  const start = offsetRaw ? Number(offsetRaw) : 0;
-  const end = limitRaw ? start + Number(limitRaw) : lines.length;
-  content = lines.slice(start, end).join('\\n');
-}
-process.stdout.write(content);
+const READ_SCRIPT = `${COMMON_SHELL_HELPERS}
+root=$(pwd -P) || exit 1
+target=$(existing_target "$1" 'Read path') || exit 1
+offset=$2
+limit=$3
+if [ -z "$offset" ] && [ -z "$limit" ]; then
+  cat "$target"
+else
+  awk -v start="\${offset:-0}" -v limit="$limit" '
+    BEGIN { first = start + 1; last = limit == "" ? 0 : start + limit; wrote = 0 }
+    NR >= first && (last == 0 || NR <= last) {
+      if (wrote) printf "\\n"
+      printf "%s", $0
+      wrote = 1
+    }
+  ' "$target"
+fi
 `;
 
-const WRITE_SCRIPT = `${COMMON_NODE_HELPERS}
-const [inputPath, contentBase64] = process.argv.slice(1);
-const root = workspaceRoot();
-const target = writableTarget(root, inputPath, 'Write path');
-fs.writeFileSync(target, Buffer.from(contentBase64, 'base64'));
+const WRITE_SCRIPT = `${COMMON_SHELL_HELPERS}
+root=$(pwd -P) || exit 1
+target=$(writable_target "$1" 'Write path') || exit 1
+printf '%s' "$2" > "$target"
 `;
 
-const EDIT_SCRIPT = `${COMMON_NODE_HELPERS}
-const [inputPath, oldBase64, nextBase64] = process.argv.slice(1);
-const root = workspaceRoot();
-const target = existingTarget(root, inputPath, 'Edit path');
-const oldString = Buffer.from(oldBase64, 'base64').toString('utf8');
-const newString = Buffer.from(nextBase64, 'base64').toString('utf8');
-const current = fs.readFileSync(target, 'utf8');
-const count = current.split(oldString).length - 1;
-if (count === 0) throw new Error('old_string not found in ' + inputPath);
-if (count > 1) throw new Error('old_string is not unique in ' + inputPath + ' (' + count + ' matches)');
-fs.writeFileSync(target, current.replace(oldString, newString), 'utf8');
+const EDIT_SCRIPT = `${COMMON_SHELL_HELPERS}
+root=$(pwd -P) || exit 1
+target=$(existing_target "$1" 'Edit path') || exit 1
+tmp=$(mktemp "$target.maka-edit.XXXXXX") || exit 1
+perl -0 -e '
+  use strict;
+  use warnings;
+  my ($old, $new, $target, $tmp) = @ARGV;
+  die "old_string must not be empty\n" if $old eq "";
+  open my $in, "<:raw", $target or die "$target: $!\n";
+  local $/;
+  my $content = <$in>;
+  close $in;
+  my $count = () = $content =~ /\\Q$old\\E/g;
+  die "old_string not found in $target\n" if $count == 0;
+  die "old_string is not unique in $target ($count matches)\n" if $count > 1;
+  $content =~ s/\\Q$old\\E/$new/;
+  open my $out, ">:raw", $tmp or die "$tmp: $!\n";
+  print {$out} $content;
+  close $out;
+' "$2" "$3" "$target" "$tmp"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  rm -f "$tmp"
+  exit "$rc"
+fi
+mv "$tmp" "$target"
 `;
 
-const GLOB_SCRIPT = `${COMMON_NODE_HELPERS}
-const [pattern, searchCwd] = process.argv.slice(1);
-const root = workspaceRoot();
-const base = searchCwd ? existingTarget(root, searchCwd, 'Glob cwd') : root;
-const files = [];
-for (const entry of fs.globSync(pattern, { cwd: base })) {
-  files.push(typeof entry === 'string' ? entry : entry.name);
-  if (files.length >= 200) break;
-}
-process.stdout.write(JSON.stringify(files));
-`;
-
-const GREP_SCRIPT = `${COMMON_NODE_HELPERS}
-const [pattern, inputPath, globPattern] = process.argv.slice(1);
-const root = workspaceRoot();
-const start = inputPath ? existingTarget(root, inputPath, 'Grep path') : root;
-const regex = new RegExp(pattern);
-const matches = [];
-const perFile = new Map();
-const globRegex = globPattern ? globToRegExp(globPattern) : null;
-function globToRegExp(glob) {
-  let out = '^';
-  for (let i = 0; i < glob.length; i += 1) {
-    const ch = glob[i];
-    const next = glob[i + 1];
-    if (ch === '*' && next === '*') {
-      out += '.*';
-      i += 1;
-    } else if (ch === '*') {
-      out += '[^/]*';
-    } else if (ch === '?') {
-      out += '[^/]';
-    } else {
-      out += ch.replace(/[|\\{}()[\\]^$+?.]/g, '\\$&');
+const GLOB_SCRIPT = `${COMMON_SHELL_HELPERS}
+root=$(pwd -P) || exit 1
+pattern=$1
+pattern_re=$2
+search_cwd=$3
+if [ -n "$search_cwd" ]; then
+  base=$(existing_target "$search_cwd" 'Glob cwd') || exit 1
+else
+  base=$root
+fi
+find "$base" -type f -print | awk -v root="$root" -v re="$pattern_re" '
+  BEGIN { prefix = root "/"; count = 0 }
+  {
+    rel = $0
+    if (index(rel, prefix) == 1) rel = substr(rel, length(prefix) + 1)
+    if (rel ~ re) {
+      print rel
+      count += 1
+      if (count >= 200) exit
     }
   }
-  return new RegExp(out + '$');
-}
-function shouldSearch(file) {
-  if (!globRegex) return true;
-  return globRegex.test(path.relative(root, file).split(path.sep).join('/'));
-}
-function visit(file) {
-  if (matches.length >= 200) return;
-  const stat = fs.lstatSync(file);
-  if (stat.isSymbolicLink()) return;
-  const real = fs.realpathSync(file);
-  if (!inside(root, real)) return;
-  if (stat.isDirectory()) {
-    for (const child of fs.readdirSync(file)) visit(path.join(file, child));
-    return;
-  }
-  if (!stat.isFile() || !shouldSearch(file)) return;
-  const rel = path.relative(root, file).split(path.sep).join('/');
-  const lines = fs.readFileSync(file, 'utf8').split('\\n');
-  for (let i = 0; i < lines.length && matches.length < 200; i += 1) {
-    if (!regex.test(lines[i])) continue;
-    const seen = perFile.get(file) ?? 0;
-    if (seen >= 50) break;
-    perFile.set(file, seen + 1);
-    matches.push(rel + ':' + (i + 1) + ':' + lines[i]);
-  }
-}
-visit(start);
-process.stdout.write(JSON.stringify(matches));
+'
+`;
+
+const GREP_SCRIPT = `${COMMON_SHELL_HELPERS}
+root=$(pwd -P) || exit 1
+grep_pattern=$1
+input_path=$2
+glob_re=$4
+if [ -n "$input_path" ]; then
+  start=$(existing_target "$input_path" 'Grep path') || exit 1
+else
+  start=$root
+fi
+if [ -f "$start" ]; then
+  file_list=$start
+else
+  file_list=$(find "$start" -type f -print)
+fi
+printf '%s\n' "$file_list" | while IFS= read -r file; do
+  [ -n "$file" ] || continue
+  rel=$file
+  prefix=$root/
+  case "$rel" in "$prefix"*) rel=\${rel#"$prefix"} ;; esac
+  if [ -n "$glob_re" ]; then
+    printf '%s\n' "$rel" | awk -v re="$glob_re" 'BEGIN { ok = 1 } $0 ~ re { ok = 0 } END { exit ok }' || continue
+  fi
+  awk -v rel="$rel" -v pattern="$grep_pattern" '
+    $0 ~ pattern {
+      print rel ":" NR ":" $0
+      count += 1
+      if (count >= 50) exit
+    }
+  ' "$file"
+done | awk 'NR <= 200'
 `;
