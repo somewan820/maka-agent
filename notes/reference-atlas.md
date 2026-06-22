@@ -400,3 +400,170 @@ grep -oE 'box-shadow:[^;}]+' /tmp/reference-globals.css | sort -u
 # Page-level class strings from JS
 grep -oE '"(agents|workbench|aux|cron|skills|settings)-[a-z-]+"' /tmp/qoder-extracted/out/renderer/assets/index-C02cm0ok.js | sort -u
 ```
+
+---
+
+## 12. Deep-RE Addendum (Phase 1 follow-up)
+
+Additional findings from a second pass focused on JS chunk component naming,
+secondary entry-point HTMLs, and the data-* state vocabulary. Builds on §1–§11.
+
+### 12.1 Secondary entry-point HTMLs
+
+The bundle ships 4 secondary HTML entry points beyond `index.html`:
+
+| File                       | Lines | Role                                              |
+|----------------------------|-------|---------------------------------------------------|
+| `quickpick.html`           | 58    | Floating spotlight-style command bar (transparent body, vibrancy-aware, own renderer bundle `quickpick-CilslRnn.js`) |
+| `voice-overlay.html`       | 39    | Voice transcription overlay (Whisper-style)       |
+| `artifact-preview.html`    | 34    | Sandboxed artifact preview surface                |
+| `mcp-app-preview.html`     | 33    | Sandboxed MCP app preview surface                 |
+
+Quickpick deserves special attention: `html, body, #root` all get
+`background: transparent !important` and a system-font fallback. The window
+chrome (corners, shadow) is owned by the **Electron window** itself, not CSS —
+they pad nothing and rely on `setVibrancy(theme)` for material rendering. This
+is a strong signal that the reference layout's "premium floating chrome" is
+half CSS and half native window-level treatment. Maka has no quickpick-equivalent.
+
+### 12.2 Data-* state vocabulary (beyond §8)
+
+A second sweep through the JS bundle surfaced the **structural** data-attrs
+the reference layout uses for layout state. These are CSS hooks the
+component tree sets imperatively, not user state:
+
+- `[data-resizable-sidebar]` — sidebar is resizable (drag handle present)
+- `[data-sidebar-collapse-button]` — the collapse toggle button
+- `[data-sidebar-collapsed]` — current collapse state
+- `[data-sidebar-content]` — sidebar content slot
+- `[data-workbench-root]` — workbench tree root
+- `[data-workbench-stack]` — vertical card stack inside workbench
+- `[data-workbench-card]` — individual workbench card
+- `[data-workbench-fixed-panel-child]` — non-resizable child panel
+- `[data-panel-name]` — named panel (for the resizable react-panel lib)
+- `[data-settings-nav-column]` — Settings left-nav column
+- `[data-canvas-dialog]` — canvas-style dialog (probably used for full-bleed previews)
+- `[data-banner-logo]` — branded banner logo slot
+
+The pattern: structural state is on `data-*`, theming is on
+`[data-theme=…]`, route is on `[data-agents-view=…]`. CSS targets the
+data-attrs heavily, components don't carry presentation classes —
+they wear semantic classes (e.g. `settings-nav-column`) AND set
+their parent's `data-*` for the CSS targeting layer to see.
+
+Maka mostly uses regular className prefixes (`.maka-*`). Adopting
+`data-*` state would let us write tighter CSS without prop drilling
+classNames through every component.
+
+### 12.3 Telemetry naming as a structure proxy
+
+The JS bundle also contains telemetry event names (underscore-separated:
+`cron_run_log_view_conversation`). These reveal the **surface granularity**
+the reference team thinks in. A few patterns worth knowing:
+
+- **Cron page surfaces:** `cron_page_view` / `cron_task_create` /
+  `cron_task_update` / `cron_toggle_enabled` / `cron_run_now` /
+  `cron_run_log_detail_view` / `cron_run_log_rerun` /
+  `cron_run_logs_filter` / `cron_run_logs_tab_view` /
+  `cron_sort_change` — there are multiple top-level surfaces:
+  task list, run logs, log detail, plus filter/sort.
+- **Settings page surfaces:** `settings_tab_view` / `settings_tab` /
+  `settings_general_section` / `settings_preferences` /
+  `settings_profile_tab_view` / `settings_app_update_check_click` /
+  `settings_legokit_tab` / `settings_general_hidden_entry_unlock` —
+  Settings has *tabs* (not the single rail Maka has), with
+  Profile / General / Preferences / LegoKit (their term for skills/extensions)
+  as top-level. The hidden-entry unlock is a 5-click easter egg.
+- **Sidebar:** `sidebar_chat_group_set` / `sidebar_chat_group_delete` /
+  `sidebar_chat_group_dissolve` / `sidebar_chat_group_toggle` /
+  `sidebar_workspace_group` / `sidebar_im_session` /
+  `sidebar_cron_group` — sidebar supports nested groups (workspace,
+  chats, IM channels, cron). Maka's sidebar is flat.
+
+Maka has none of the group-nesting in its sidebar. The reference layout
+keeps an entire IM-hub and a workspace-group structure that Maka would
+need new IPC + data model to support — out of pure-UI scope, but worth
+noting that **the reference sidebar is materially more structured**.
+
+### 12.4 Streaming + indeterminate keyframe specs (ready to port)
+
+Two keyframes I flagged in §6 as worth porting, with exact specs verified:
+
+```css
+@keyframes streaming-fade-in {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+.streaming-token-fade-in {
+  animation: 0.18s ease-out forwards streaming-fade-in;
+}
+```
+Per-token fade on Markdown stream — wrap each streamed token in a span
+with `.streaming-token-fade-in`. Requires Markdown renderer surgery in
+Maka's chat-markdown-renderer to wrap each delta in a span; skipping
+for now to avoid renderer risk. Adding the keyframe + utility class
+so the wrapping can happen later without another atlas pass.
+
+```css
+@keyframes indeterminate-slide {
+  0%   { left: -40%; }
+  100% { left: 100%; }
+}
+.animate-indeterminate {
+  animation: 1.4s ease-in-out infinite indeterminate-slide;
+}
+```
+Indeterminate progress bar — needs a container with `overflow: hidden`
+and a child of `width: 40%; position: absolute; top: 0; bottom: 0;`
+applying the animation. Useful for: retry-load pending state, action
+in-flight in modal footers, plan reminder run-now in-flight.
+
+### 12.5 Heading + lede typography (settings page)
+
+Three settings-specific typography classes surfaced in the JS bundle:
+
+- `.agents-settings-page-heading` — page H1 (no exact size sampled; per
+  the type-scale and convention this is `--text-3xl` = 30px / 600 with
+  tight tracking)
+- `.agents-settings-page-title-narrow` — narrow-viewport variant
+  (probably `--text-2xl` = 24px when sidebar is at full width)
+- `.agents-settings-page-description` — lede paragraph under the H1
+  (probably `--text-sm` = 14px with `--color-text-secondary`)
+
+Maka's `.settingsHeader h1` is currently 30/600 after Phase 2B — already
+matches. The `-narrow` responsive variant doesn't exist in Maka; could
+add via `@media (max-width: 1100px)` (atlas-style).
+
+### 12.6 Updated Phase 2 plan (revised after deep RE)
+
+Phase 2C (next big PR): wire the deep findings into code.
+
+**Done so far:**
+- Atlas §1–§11 (Phase 1 commit `fe74d870`)
+- Plan + Skills page card + display heading + token system (Phase 2A `81b180d2`)
+- Settings page chrome card recipe + display heading (Phase 2B `753ae8e0`)
+
+**Phase 2C scope:**
+- a) Port `streaming-fade-in` + `indeterminate-slide` keyframes + utility
+     classes (Atlas §12.4) — CSS only, no JSX wiring; future PRs can use
+     them on streamed tokens / loading bars.
+- b) Apply page-card recipe to chat composer card outer chrome
+     (`.composer .maka-composer-inner` → 6px radius + hairline border +
+     1px inner highlight + 4% lift).
+- c) Apply page-card recipe to Plan/Reminder sub-sections (alert hero,
+     tabs panel, template strip) so each acts as a workbench-card-style
+     aux-panel with 4-6px gaps between siblings (atlas `--card-gap: 4px`).
+- d) Settings: add the `-narrow` responsive variant per §12.5.
+- e) Settings: apply the page-card recipe to internal sub-cards
+     (preferences sections, profile card) so they read as aux-panels
+     instead of flat dividers.
+
+**NOT in Phase 2C (deferred):**
+- f) Real Settings Modal → inline-page restructure (main.tsx render tree
+     change, requires focus-trap / a11y rework, deserves a focused PR).
+- g) `data-*` state vocabulary refactor (atlas §12.2) — too invasive,
+     touches every component file.
+- h) Sidebar group-nesting (workspace / IM channels) — needs new IPC
+     + data model, out of pure-UI scope.
+- i) Wrap streamed Markdown tokens in `.streaming-token-fade-in` (needs
+     renderer surgery; the CSS lands in 2C so future wiring is one-line).

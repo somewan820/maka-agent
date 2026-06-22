@@ -6286,17 +6286,20 @@ button:active {
   max-width: 680px;
   margin-inline: auto;
   box-sizing: border-box;
-  /* PR-UI-PIXEL-3: reference composer is rounder (~12px) and floats on a
-     soft hairline ring, not a hard border (study §3.1). */
-  border-radius: 12px;
+  /* Composer outer chrome uses the universal page-card recipe (atlas §4
+     + maka-tokens.css --card-*) but with a slightly larger 10px radius
+     since the composer reads as a "hero card" rather than a flush page
+     surface — 6px would feel too tight for a 72px+ tall floating panel. */
+  border: 1px solid var(--card-border-color);
+  border-radius: 10px;
   padding: 10px 12px;
-  background: var(--background);
+  background: var(--card-bg);
   box-shadow:
-    0 0 0 1px oklch(from var(--foreground) l c h / 0.035),
-    0 1px 3px oklch(from var(--foreground) l c h / 0.025);
+    var(--card-shadow),
+    var(--card-highlight);
   transition:
-    border-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    border-color 180ms var(--ease-out-strong),
+    box-shadow 220ms var(--ease-out-strong);
 }
 
 .composer .maka-composer-inner::before,
@@ -13677,4 +13680,76 @@ button:active {
   grid-column: 3;
   width: 28px;
   height: 9px;
+}
+
+/* =============================================================================
+   Ported keyframes from upstream reference design (atlas §12.4).
+   - streaming-fade-in: per-token fade-in for streamed Markdown.
+   - indeterminate-slide: horizontal sweep for indeterminate progress bars.
+   Both are CSS-only here; future PRs can wire them to actual surfaces.
+============================================================================= */
+
+@keyframes maka-streaming-token-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.maka-streaming-token-fade-in {
+  animation: maka-streaming-token-fade-in 180ms ease-out forwards;
+}
+
+@keyframes maka-indeterminate-slide {
+  from { left: -40%; }
+  to   { left: 100%; }
+}
+
+.maka-indeterminate-bar {
+  position: relative;
+  width: 100%;
+  height: 2px;
+  overflow: hidden;
+  background: oklch(from var(--foreground) l c h / 0.06);
+  border-radius: 999px;
+}
+
+.maka-indeterminate-bar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent) 50%,
+    transparent 100%
+  );
+  animation: maka-indeterminate-slide 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .maka-streaming-token-fade-in,
+  .maka-indeterminate-bar::after {
+    animation: none;
+  }
+}
+
+[data-maka-visual-smoke="true"] .maka-streaming-token-fade-in,
+[data-maka-visual-smoke="true"] .maka-indeterminate-bar::after {
+  animation: none;
+}
+
+/* =============================================================================
+   Settings narrow-viewport heading variant — atlas §12.5 ports the
+   `.agents-settings-page-title-narrow` pattern: when the page card is narrow
+   (sidebar at full width on a small viewport), drop the H1 from --text-3xl
+   to --text-2xl so it doesn't blow up the header rail.
+============================================================================= */
+
+@media (max-width: 1100px) {
+  .settingsHeader h1 {
+    font-size: 24px;
+    letter-spacing: -0.008em;
+    line-height: 1.2;
+  }
 }
