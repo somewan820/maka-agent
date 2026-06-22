@@ -234,6 +234,22 @@
   --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 
+  /* === page-card recipe ===
+     Single source of truth for the lifted "page card" chrome used by every
+     top-level module page (Skills, Plan/Reminder, future Settings). Atlas
+     §4: the reference layout's signature recipe is `1px tertiary border +
+     6px radius + 0 1px 2px @ 4% lift` — every workbench-card, aux-panel,
+     and agents-chat-panel uses these three values. See
+     notes/reference-atlas.md §9 for the per-surface gap analysis. */
+  --card-radius: 6px;
+  --card-gap: 4px;
+  --card-border-color: oklch(from var(--foreground) l c h / 0.08);
+  --card-bg: var(--background);
+  --card-shadow: 0 1px 2px oklch(from var(--foreground) l c h / 0.04);
+  /* Inner top highlight — high-end-visual-design §4A Doppelrand: cards
+     read as physical hardware via a 1px inner top sheen. */
+  --card-highlight: inset 0 1px 0 oklch(1 0 0 / 0.04);
+
   /* sidebar / pane widths (use as max-inline-size on resizable panels) */
   --w-sidebar: 240px;
   --w-rail: 240px;

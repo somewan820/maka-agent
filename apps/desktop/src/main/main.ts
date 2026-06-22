@@ -1424,6 +1424,20 @@ async function createWindow(): Promise<void> {
     // renderer side of the same gate.
     resizable: true,
     backgroundColor: initialBg,
+    // Glass material — reference-atlas §1 + §12.1 documents the upstream
+    // reference layout's `light-glass` / `dark-glass` themes that paint
+    // the sidebar against native macOS vibrancy material. Enabling
+    // `vibrancy: 'sidebar'` here lets the CSS-side sidebar render
+    // transparent and inherit the system's blurred window material
+    // (Big Sur+). Renderer CSS gates the transparency on
+    // `[data-vibrancy="active"]` so non-macOS builds (where vibrancy is
+    // a no-op) keep their opaque chrome.
+    // Skip vibrancy under MAKA_VISUAL_SMOKE_FIXTURE — capture environments
+    // can't paint native window material reliably, and the auto-capture
+    // renderer would stall waiting for compositor frames that never settle.
+    ...(process.platform === 'darwin' && !process.env.MAKA_VISUAL_SMOKE_FIXTURE
+      ? { vibrancy: 'sidebar' as const }
+      : {}),
     webPreferences: {
       preload: join(import.meta.dirname, '..', 'preload', 'preload.cjs'),
       // Defense-in-depth flags (@kenji PR96 review). The external-link guard

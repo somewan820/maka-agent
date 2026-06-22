@@ -917,6 +917,24 @@ function AppShell() {
     activeIdRef.current = activeId;
   }, [activeId]);
 
+  // Tag the document with the host OS so glass-material CSS rules
+  // (sidebar vibrancy passthrough — see notes/reference-atlas.md §1 + §12.1)
+  // can light up only on macOS, where `BrowserWindow({ vibrancy: 'sidebar' })`
+  // paints the native blur material behind the renderer. Other platforms
+  // keep their opaque chrome since vibrancy is a no-op there.
+  useEffect(() => {
+    let cancelled = false;
+    void window.maka.app.info().then((info) => {
+      if (cancelled) return;
+      document.documentElement.setAttribute('data-os', info.platform);
+    }).catch(() => {
+      /* swallow — leaves data-os unset, CSS falls back to opaque chrome */
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // P3 embedded browser: track which sessions have a live view (panel mounts
   // only for those) and tell main which session this window shows (so it can
   // validate browser:* IPC targets).
@@ -2733,7 +2751,6 @@ function AppShell() {
             }}
             onOpenSettings={openSettings}
             userLabel={userLabel}
-            onOpenUpdate={() => openSettingsSection('about')}
             onNew={createSession}
             onOpenSearchModal={() => setSearchModalOpen(true)}
             onRefreshPlanReminders={() => refreshPlanReminders({ shouldShowError: isAutomationsSurfaceActive })}
@@ -3039,6 +3056,7 @@ function AppShell() {
                   ?? undefined
                 }
                 activeSession={activeSessionForView}
+                activeConnectionLabel={activeConnectionLabel}
                 activeModelLabel={activeModelLabel}
                 modelChoices={chatModelChoices}
                 modelChangePending={activeId ? pendingSessionModelBySession[activeId] === true : false}

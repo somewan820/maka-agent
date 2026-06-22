@@ -360,8 +360,6 @@ export function SessionListPanel(props: {
   userLabel?: string;
   onNew(): void;
   onOpenSkill?(skillId: string): void;
-  /** Opens the local version/build information surface. */
-  onOpenUpdate(): void;
   /**
    * PR-SIDEBAR-IA-0 Phase 2 fixup (xuan `91401163` + `94c7bf0f`):
    * Sidebar `搜索` nav row click handler. Opens a dedicated Search
@@ -632,6 +630,11 @@ export function SessionListPanel(props: {
       </section>
 
       <footer className="maka-session-panel-footer">
+        {/* Maka has no account system — the sidebar footer is a thin
+            settings affordance only. The earlier `.maka-sidebar-account`
+            "Free Plan" widget falsely implied a subscription model and
+            was removed per WAWQAQ msg cad3dec4. About / version info
+            still reachable via Settings → 关于. */}
         <button
           className="maka-sidebar-settings-button"
           type="button"
@@ -4029,9 +4032,29 @@ export function ChatView(props: {
     );
   }
 
+  const streaming = props.streamingText.length > 0;
+  const permissionModeDisabledReason = props.permissionModePending
+    ? '权限模式正在切换，完成后再继续操作。'
+    : streaming
+      ? '当前对话正在流式输出，等结束后再切换权限模式。'
+      : props.activeSession?.status === 'running'
+        ? '当前对话正在运行，等结束后再切换权限模式。'
+        : props.activeSession?.status === 'waiting_for_user'
+          ? '当前有工具调用正在等待确认，处理后再切换权限模式。'
+          : undefined;
+  const switcherDisabled = Boolean(permissionModeDisabledReason) || !props.activeSession || !props.onPermissionModeChange;
+
   if (!props.activeSession) {
     return (
       <main className="maka-main detailPane agents-chat-panel agents-chat-view-root">
+        <header className="maka-chat-header">
+          <ChatTab title="新建对话" />
+          <button className="maka-chat-tab-plus" type="button" aria-label="新建对话" onClick={props.onNew}>
+            <Plus strokeWidth={1.5} aria-hidden="true" />
+          </button>
+          <span className="maka-chat-header-spacer" />
+          <PermissionModeSwitcher mode="ask" disabled disabledReason="新建对话后再切换模式。" />
+        </header>
         <OverlayScrollArea
           className="maka-chat messages"
           viewportClassName="maka-chatViewport"
@@ -4048,6 +4071,56 @@ export function ChatView(props: {
 
   return (
     <main className="maka-main detailPane agents-chat-panel agents-chat-view-root">
+      <header className="maka-chat-header">
+        <ChatTab
+          title={props.activeSession.name}
+          subtitle={props.activeModelLabel ?? props.activeConnectionLabel}
+          subtitleHint={props.activeConnectionLabel && props.activeModelLabel
+            ? `本会话固定模型：${props.activeConnectionLabel} · ${props.activeModelLabel}。设置里的默认模型只影响新建会话。`
+            : undefined}
+          providerMark={props.activeProviderType && props.renderProviderMark
+            ? props.renderProviderMark(props.activeProviderType)
+            : undefined}
+        />
+        <button className="maka-chat-tab-plus" type="button" aria-label="新建对话" onClick={props.onNew}>
+          <Plus strokeWidth={1.5} aria-hidden="true" />
+        </button>
+        <span className="maka-chat-header-spacer" />
+        {props.memoryActive && (
+          <button
+            type="button"
+            className="maka-chat-header-memory-pill"
+            data-active="true"
+            onClick={() => props.onOpenMemorySettings?.()}
+            title="本地 MEMORY.md 已加入 agent 系统提示。点击进入设置 · 记忆 管理。"
+            aria-label="本地记忆已启用"
+          >
+            <BookOpen size={12} strokeWidth={1.75} aria-hidden="true" />
+            <span>记忆</span>
+          </button>
+        )}
+        {deepResearchActive && (
+          <span
+            className="maka-chat-header-mode-pill"
+            data-mode="deep-research"
+            title="深度研究会话使用只读探索边界：先阅读和分析，默认不改文件。"
+            aria-label="深度研究，只读探索"
+          >
+            <Sparkles size={12} strokeWidth={1.75} aria-hidden="true" />
+            <span>深度研究</span>
+          </span>
+        )}
+        {props.sessionStatusBadge && <SessionStatusBadge badge={props.sessionStatusBadge} />}
+        {props.connectionAlert && <ChatHeaderAlertBadge alert={props.connectionAlert} />}
+        {props.eventStreamAlert && <ChatHeaderAlertBadge alert={props.eventStreamAlert} />}
+        <PermissionModeSwitcher
+          mode={props.activeSession.permissionMode}
+          disabled={switcherDisabled}
+          disabledReason={permissionModeDisabledReason}
+          pending={props.permissionModePending}
+          onChange={props.onPermissionModeChange}
+        />
+      </header>
       {isLocalSimulationBackend && (
         <Alert variant="info" className="maka-fake-backend-banner" role="status">
           <AlertTriangle size={14} strokeWidth={1.75} aria-hidden="true" />
@@ -4179,6 +4252,8 @@ export function ChatView(props: {
 function ChatModelSwitcher(props: {
   activeSession: SessionSummary;
   activeModel?: string;
+  activeConnectionLabel?: string;
+  activeModelLabel?: string;
   choices: ChatModelChoice[];
   pending?: boolean;
   disabledReason?: string;
@@ -4205,9 +4280,12 @@ function ChatModelSwitcher(props: {
     ],
     [currentKnownChoice, currentModel, currentValue, props.choices],
   );
+  const currentSessionModelTitle = props.activeConnectionLabel && props.activeModelLabel
+    ? `本会话固定模型：${props.activeConnectionLabel} · ${props.activeModelLabel}`
+    : '切换当前会话使用的模型';
   const title = pending
     ? '正在切换当前会话模型…'
-    : props.disabledReason ?? '切换当前会话使用的模型。设置里的默认模型只影响新建会话；这里会更新当前会话。';
+    : props.disabledReason ?? `${currentSessionModelTitle}。设置里的默认模型只影响新建会话；这里会更新当前会话。`;
 
   useEffect(() => {
     modelSwitcherMountedRef.current = true;
@@ -5978,6 +6056,7 @@ export const Composer = forwardRef<
     onImportDroppedTextFiles?(files: File[]): void | Promise<void>;
     modelLabel?: string;
     activeSession?: SessionSummary;
+    activeConnectionLabel?: string;
     activeModelLabel?: string;
     modelChoices?: ChatModelChoice[];
     modelChangePending?: boolean;
@@ -6378,6 +6457,8 @@ export const Composer = forwardRef<
                   <ChatModelSwitcher
                     activeSession={props.activeSession}
                     activeModel={props.activeModelLabel}
+                    activeConnectionLabel={props.activeConnectionLabel}
+                    activeModelLabel={props.activeModelLabel}
                     choices={props.modelChoices ?? []}
                     pending={props.modelChangePending}
                     disabledReason={modelSwitcherDisabledReason}
