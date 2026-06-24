@@ -18,6 +18,7 @@ import type { RunTraceEvent } from './run-trace.js';
 import type { SessionStore, StopSessionInput } from './session-manager.js';
 import { buildRuntimeEventModelReplayPlan } from './model-history.js';
 import { projectRuntimeEventsToStoredMessages } from './runtime-event-read-model.js';
+import { backfillRuntimeEventsFromStoredMessages } from './runtime-event-backfill.js';
 import {
   buildStatusPatch,
   normalizeStopSessionSource,
@@ -349,9 +350,13 @@ export class AgentRun {
       if (!isTerminalRunStatus(run.status)) {
         continue;
       }
-      const events = await this.input.runtimeEventStore.readRuntimeEvents(this.sessionId, run.runId);
+      let events = await this.input.runtimeEventStore.readRuntimeEvents(this.sessionId, run.runId);
       if (events.length === 0) {
-        throw new Error(`Cannot build model context: RuntimeEvent ledger is missing for prior run ${run.runId}`);
+        const recovered = await this.backfillMissingPriorRuntimeEvents(run);
+        if (recovered.length === 0 || !recovered.some(isTerminalRuntimeEvent)) {
+          throw new Error(`Cannot build model context: RuntimeEvent ledger is missing for prior run ${run.runId}`);
+        }
+        events = recovered;
       }
       if (!events.some(isTerminalRuntimeEvent)) {
         throw new Error(`Cannot build model context: RuntimeEvent ledger has no terminal fact for prior run ${run.runId}`);
@@ -370,6 +375,16 @@ export class AgentRun {
     const runtimeReplayPlan = buildRuntimeEventModelReplayPlan(events);
     if (runtimeReplayPlan.items.length === 0) return undefined;
     return { events, runs: priorRuns };
+  }
+
+  private async backfillMissingPriorRuntimeEvents(run: AgentRunHeader): Promise<RuntimeEvent[]> {
+    let messages: StoredMessage[];
+    try {
+      messages = await this.input.store.readMessages(this.sessionId);
+    } catch {
+      return [];
+    }
+    return backfillRuntimeEventsFromStoredMessages({ run, messages }).events;
   }
 
   private async markRunStarted(ts: number): Promise<void> {
