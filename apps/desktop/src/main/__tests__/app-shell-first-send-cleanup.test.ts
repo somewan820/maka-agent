@@ -341,6 +341,36 @@ describe('composer first-send cleanup', () => {
     assert.equal(resolved, 0);
   });
 
+  it('does not consume a pending Work Board claim from an existing Session', async () => {
+    let resolved = 0;
+    const restoreWindow = installWindow({
+      sessions: {
+        submitMessage: async () => ({
+          ok: true,
+          attachments: [],
+          skillInvocation: { loaded: [], failed: [] },
+        }),
+      },
+    });
+
+    try {
+      const deps = createActionsDeps();
+      deps.activeIdRef.current = 'session-existing';
+      const result = await createAppShellChatActions(deps).send('hello', undefined, {
+        onSessionResolved: () => {
+          resolved += 1;
+        },
+      });
+      assert.equal(result, true);
+    } finally {
+      restoreWindow();
+    }
+
+    // A pending Work Board start claim is bound to the new-Session surface
+    // that created it; an existing-Session send must never consume it.
+    assert.equal(resolved, 0);
+  });
+
   it('projects the first message before activation while waiting to submit until observation', async () => {
     const observation = deferred<void>();
     const order: string[] = [];

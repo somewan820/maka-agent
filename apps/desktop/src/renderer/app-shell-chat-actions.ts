@@ -611,7 +611,9 @@ export function createAppShellChatActions(deps: {
       });
       if (submitted.kind === 'refused') return false;
       if (submitted.kind === 'unreconciled') return true;
-      options.onSessionResolved?.(sessionId);
+      // A pending Work Board start claim is bound to the new-Session surface
+      // that created it; an existing-Session send must never consume it, or a
+      // task started from the board could link an unrelated conversation.
       return true;
     } catch (error) {
       // Capture ownership before cleanup clears the optimistic Session. A

@@ -81,6 +81,7 @@ export interface WorkbarControllerCommands {
   toggleRight(): void;
   onNewTaskSessionResolved(sessionId: string): void;
   onNewTaskSessionNotProjected(): void;
+  onNewTaskSurfaceStarted(): void;
 }
 
 export interface WorkbarControllerSelectors {
@@ -207,6 +208,12 @@ export function useWorkbarController(
     pendingWorkBoardStartRef.current = undefined;
   }, []);
 
+  // A new task surface replaces whatever surface a pending Work Board start
+  // claim was bound to, so the claim can never outlive its surface.
+  const onNewTaskSurfaceStarted = useCallback(() => {
+    pendingWorkBoardStartRef.current = undefined;
+  }, []);
+
   const startWorkBoardTask = useCallback(
     (item: WorkBoardItem) => {
       if (pendingWorkBoardStartRef.current) {
@@ -260,7 +267,6 @@ export function useWorkbarController(
     (sessionId: string) => {
       const pending = pendingWorkBoardStartRef.current;
       if (!pending) return;
-      pendingWorkBoardStartRef.current = undefined;
       const linkedSessionId = (() => {
         try {
           return parseDesktopSessionKey(sessionId).sessionId;
@@ -268,11 +274,25 @@ export function useWorkbarController(
           return sessionId;
         }
       })();
+      const settle = (message?: string) => {
+        // The claim's Session already exists: keep the claim only until the
+        // link settles so it cannot be relinked by a later new-Session send
+        // (the binding that C1 enforces). Clear only the claim this call owns
+        // so a newer start-task claim started mid-link is never clobbered. A
+        // failed link surfaces the error; retry by starting the task again
+        // from the board.
+        if (pendingWorkBoardStartRef.current === pending) {
+          pendingWorkBoardStartRef.current = undefined;
+        }
+        if (message) {
+          input.toastApi.error(
+            getDesktopConversationCopy(locale).workBoardPanel.actionFailed,
+            message,
+          );
+        }
+      };
       if (!workBoard) {
-        input.toastApi.error(
-          getDesktopConversationCopy(locale).workBoardPanel.actionFailed,
-          'Work Board linking is unavailable in this desktop session.',
-        );
+        settle('Work Board linking is unavailable in this desktop session.');
         return;
       }
       void workBoard
@@ -283,18 +303,10 @@ export function useWorkbarController(
           linkedAt: Date.now(),
         })
         .then((result) => {
-          if (!result.ok) {
-            input.toastApi.error(
-              getDesktopConversationCopy(locale).workBoardPanel.actionFailed,
-              result.message,
-            );
-          }
+          settle(result.ok ? undefined : result.message);
         })
         .catch((error) => {
-          input.toastApi.error(
-            getDesktopConversationCopy(locale).workBoardPanel.actionFailed,
-            error instanceof Error ? error.message : String(error),
-          );
+          settle(error instanceof Error ? error.message : String(error));
         });
     },
     [input, locale, workBoard],
@@ -780,10 +792,12 @@ export function useWorkbarController(
       toggleRight,
       onNewTaskSessionResolved,
       onNewTaskSessionNotProjected,
+      onNewTaskSurfaceStarted,
     }),
     [
       onNewTaskSessionNotProjected,
       onNewTaskSessionResolved,
+      onNewTaskSurfaceStarted,
       openSideChatWithQuote,
       openTool,
       respondToClientCapability,
