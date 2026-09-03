@@ -119,6 +119,7 @@ import {
   type ReconnectableReadIpcMain,
 } from "./ipc-reconnect-policy.js";
 import { createMainWindowController } from "./main-window.js";
+import { resolveWindowRevealMode } from "./window-reveal.js";
 import type { DesktopRuntimeHostIdentity } from "../preload/bridge-contract.js";
 import {
   captureDesktopDiagnosticEnvironment,
@@ -473,15 +474,17 @@ function ensureMcpReady(): Promise<void> {
   return mcpStartup;
 }
 const keepSystemAwake = createKeepSystemAwakeController(powerSaveBlocker);
-const startHidden =
-  (Boolean(e2eFixture) || isIsolatedE2e) &&
-  process.env.MAKA_E2E_SHOW_WINDOW !== "1";
+const revealMode = resolveWindowRevealMode(
+  Boolean(e2eFixture) || isIsolatedE2e,
+  process.env.MAKA_E2E_SHOW_WINDOW === "1",
+  app.isPackaged,
+);
 let onMainWindowClose = (): void => {};
 const mainWindowController = createMainWindowController({
   workspaceRoot,
   e2eFixture,
   settingsStore,
-  startHidden,
+  revealMode,
   onClose: () => onMainWindowClose(),
   onRendererProcessGone: async (details) => {
     const diagnosticInput = createDesktopMainRendererDiagnosticInput({
@@ -617,7 +620,7 @@ const guestSessionMountService = createDesktopGuestSessionMountService({
   },
   finalizeAccess: async (mountId, signal, onAccessActivated) => {
     if (!runtimeHostManager) throw new Error('Runtime Host manager is unavailable');
-    await runtimeHostManager.finalizeGuestAccess(mountId, signal, onAccessActivated);
+    return runtimeHostManager.finalizeGuestAccess(mountId, signal, onAccessActivated);
   },
   unmount: async (mountId) => {
     if (!runtimeHostManager) return;
@@ -1909,7 +1912,7 @@ function wireLifecycle(): void {
     resumeQuit: () => app.quit(),
   });
   installDesktopShellPresentation({
-    startHidden,
+    revealMode,
     mainWindowController,
     focusOrCreateWindow: quitCoordinator.focusOrCreateWindow,
     onIconError: (error) =>
