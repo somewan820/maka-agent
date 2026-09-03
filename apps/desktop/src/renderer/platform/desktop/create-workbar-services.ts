@@ -33,7 +33,8 @@ export type DesktopWorkbarBridge = Pick<
   | 'shellRuns'
   | 'todo'
   | 'transcripts'
->;
+> &
+  Partial<Pick<MakaBridge, 'workBoard'>>;
 
 export interface DesktopWorkbarServiceDependencies {
   readSettledMessages: typeof readSettledMessagesFrom;
@@ -110,6 +111,13 @@ export function createDesktopWorkbarServices(
       previewApproval: (approvalId) =>
         bridge.attachments.previewApproval(approvalId),
     },
+    ...(bridge.workBoard
+      ? {
+          workBoard: {
+            linkSession: (id, link) => bridge.workBoard!.linkSession(id, link),
+          },
+        }
+      : {}),
     sideChat: {
       listSessions: () => bridge.sessions.list(),
       listTurns: (sessionId) => bridge.sessions.listTurns(sessionId),

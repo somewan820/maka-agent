@@ -202,9 +202,6 @@ export function createAppShellChatActions(deps: {
   newChatCollaborationMode: CollaborationMode;
   newChatOrchestrationMode: OrchestrationMode;
   newTaskTarget: DesktopNewTaskTarget | undefined;
-  onNewTaskSessionResolved?: (sessionId: string) => void;
-  /** Clears one-shot owners when a first send is not projected successfully. */
-  onNewTaskSessionNotProjected?: () => void;
 }): AppShellChatActions {
   const {
     uiLocale,
@@ -236,8 +233,6 @@ export function createAppShellChatActions(deps: {
     newChatCollaborationMode,
     newChatOrchestrationMode,
     newTaskTarget,
-    onNewTaskSessionResolved,
-    onNewTaskSessionNotProjected,
   } = deps;
   const copy = getShellCopy(uiLocale).chatActions;
 
@@ -277,10 +272,6 @@ export function createAppShellChatActions(deps: {
       delete cleared[sessionId];
       return cleared;
     });
-  }
-
-  function removeOptimisticUserMessage(sessionId: string, turnId: string): void {
-    removeTransientMessage(sessionId, turnId);
   }
 
   // Explicit orchestration reserves an exact Turn identity before IPC, so its
@@ -370,7 +361,7 @@ export function createAppShellChatActions(deps: {
         if (input.exactTurn) disarmTurnActive(sessionId, messageId);
         return { kind: 'unreconciled' };
       }
-      removeOptimisticUserMessage(sessionId, messageId);
+      removeTransientMessage(sessionId, messageId);
       if (input.exactTurn) disarmTurnActive(sessionId, messageId);
       if (surfaceVisible) {
         showSkillInvocationFeedback(uiLocale, toastApi, result.skillInvocation, sessionId);
@@ -426,20 +417,12 @@ export function createAppShellChatActions(deps: {
     const initialNewTaskTarget = initialSessionId ? undefined : newTaskTarget;
     const sendOwner = captureComposerImportOwner();
     const newChatOwner = initialSessionId ? null : sendOwner;
-    const isFirstSend = !initialSessionId;
-    if (!initialSessionId && !initialNewTaskTarget) {
-      onNewTaskSessionNotProjected?.();
-      return false;
-    }
-    if (!(await checkTaskSubmissionReadiness())) {
-      if (isFirstSend) onNewTaskSessionNotProjected?.();
-      return false;
-    }
+    if (!initialSessionId && !initialNewTaskTarget) return false;
+    if (!(await checkTaskSubmissionReadiness())) return false;
     if (
       (initialSessionId && !isShellSurfaceOwnerActive(sendOwner)) ||
       (newChatOwner && !isNewChatSendSurfaceActive(newChatOwner))
     ) {
-      if (isFirstSend) onNewTaskSessionNotProjected?.();
       return false;
     }
     let optimisticSessionId: string | undefined;
@@ -511,9 +494,8 @@ export function createAppShellChatActions(deps: {
         // cannot become durable text without live identity.
         await activateSessionForFirstSend(session.id);
         if (activeIdRef.current !== session.id) {
-          removeOptimisticUserMessage(session.id, messageId);
+          removeTransientMessage(session.id, messageId);
           await discardUnsentSession();
-          onNewTaskSessionNotProjected?.();
           return false;
         }
         if (exactTurn) armTurnActive(session.id, messageId);
@@ -552,22 +534,14 @@ export function createAppShellChatActions(deps: {
           isSurfaceVisible: () => activeIdRef.current === session.id,
         });
         if (submitted.kind === 'refused') {
-          onNewTaskSessionNotProjected?.();
           await discardUnsentSession();
           return false;
         }
-        if (submitted.kind === 'unreconciled') {
-          // The Host may have admitted the Message, but this client cannot
-          // prove the outcome yet. Keep the Session, but do not create a
-          // durable Work Board link from an unknown result.
-          onNewTaskSessionNotProjected?.();
-          unsentSessionId = undefined;
-          await refreshSessions();
-          return true;
-        }
         unsentSessionId = undefined;
-        options.onSessionResolved?.(session.id);
-        onNewTaskSessionResolved?.(session.id);
+        // #4598: an `unreconciled` outcome kept the Session but proves nothing
+        // about it, so it must not look like a resolved first send to the
+        // caller (the Work Board only links tasks to projected Sessions).
+        if (submitted.kind === 'projected') options.onSessionResolved?.(session.id);
         await refreshSessions();
         return true;
       }
@@ -657,9 +631,8 @@ export function createAppShellChatActions(deps: {
           })) ||
         (newChatOwner !== null && isNewChatSendSurfaceActive(newChatOwner));
       await discardUnsentSession();
-      if (isFirstSend) onNewTaskSessionNotProjected?.();
       if (optimisticSessionId && optimisticMessageId) {
-        removeOptimisticUserMessage(optimisticSessionId, optimisticMessageId);
+        removeTransientMessage(optimisticSessionId, optimisticMessageId);
       }
       // The turn never reached the runtime — close the model-wait window so the
       // "正在处理…" indicator doesn't hang after a failed send. Nothing else has
@@ -740,7 +713,7 @@ export function createAppShellChatActions(deps: {
       // would clear the composer draft the user has to retry from.
       return submitted.kind !== 'refused';
     } catch (error) {
-      removeOptimisticUserMessage(sessionId, messageId);
+      removeTransientMessage(sessionId, messageId);
       throw error;
     }
   }

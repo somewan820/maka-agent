@@ -353,7 +353,7 @@
           "@maka/ui": 1
         },
         "importSpecifiers": 39,
-        "nonTriviaTokens": 4299
+        "nonTriviaTokens": 4267
       },
       "src/renderer/app-shell-chrome-actions.tsx": {
         "importDeclarations": 5,
@@ -790,7 +790,7 @@
         "nonTriviaTokens": 1425
       },
       "src/renderer/app-shell.tsx": {
-        "importDeclarations": 109,
+        "importDeclarations": 105,
         "bridgePaths": {
           "window.maka.app.installUpdate": 1,
           "window.maka.app.retryUpdateDownload": 1,
@@ -820,7 +820,6 @@
           "window.maka.settings.getClient": 1,
           "window.maka.settings.subscribeClientChanged": 1,
           "window.maka.transcripts": 2,
-          "window.maka.workBoard.linkSession": 1,
           "window.maka.workHub.act": 1,
           "window.maka.workHub.candidates": 1,
           "window.maka.workHub.record": 1,
@@ -830,7 +829,7 @@
           "document.querySelector": 1,
           "requestAnimationFrame": 1,
           "window.clearTimeout": 4,
-          "window.requestAnimationFrame": 5,
+          "window.requestAnimationFrame": 4,
           "window.setTimeout": 2
         },
         "hookCalls": {
@@ -854,7 +853,7 @@
           "useNewTaskChoice": 1,
           "useOnboardingSnapshot": 1,
           "usePlanModeState": 1,
-          "useRef": 26,
+          "useRef": 25,
           "useSessionCollaborationDialog": 1,
           "useSessionEventHealthPolling": 1,
           "useSessionNavigationReads": 1,
@@ -883,7 +882,6 @@
         "dependencyPaths": {
           "../preload/bridge-contract.js": 1,
           "../preload/transcript-contract.js": 1,
-          "../shared/runtime-host-identity.js": 1,
           "./agent-graph-panel": 1,
           "./app-shell-app-update": 1,
           "./app-shell-chat-actions": 1,
@@ -919,7 +917,6 @@
           "./features/session-navigation": 1,
           "./features/session-settings": 1,
           "./features/task-entry": 1,
-          "./features/task-entry/index.js": 1,
           "./features/workbar": 1,
           "./follow-up-submit-routing": 1,
           "./keyboard-help": 1,
@@ -931,7 +928,6 @@
           "./locales/shell-remaining-copy.js": 1,
           "./model-connection-errors": 1,
           "./nav-selection": 1,
-          "./new-task-reload-intent.js": 1,
           "./pending-items": 1,
           "./pending-session-view": 1,
           "./plan-mode-panel": 1,
@@ -983,13 +979,12 @@
           "@maka/core/settings": 1,
           "@maka/core/slash-command-catalog": 2,
           "@maka/core/ui-locale": 2,
-          "@maka/core/work-board": 1,
           "@maka/ui": 1,
           "@maka/ui/icons": 1,
           "react": 1
         },
-        "importSpecifiers": 193,
-        "nonTriviaTokens": 16356
+        "importSpecifiers": 186,
+        "nonTriviaTokens": 15721
       },
       "src/renderer/use-app-shell-composer-quotes.ts": {
         "importDeclarations": 3,
