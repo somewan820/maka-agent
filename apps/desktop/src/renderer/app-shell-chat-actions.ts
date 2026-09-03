@@ -202,6 +202,9 @@ export function createAppShellChatActions(deps: {
   newChatCollaborationMode: CollaborationMode;
   newChatOrchestrationMode: OrchestrationMode;
   newTaskTarget: DesktopNewTaskTarget | undefined;
+  onNewTaskSessionResolved?: (sessionId: string) => void;
+  /** Clears one-shot owners when a first send is not projected successfully. */
+  onNewTaskSessionNotProjected?: () => void;
 }): AppShellChatActions {
   const {
     uiLocale,
@@ -233,6 +236,8 @@ export function createAppShellChatActions(deps: {
     newChatCollaborationMode,
     newChatOrchestrationMode,
     newTaskTarget,
+    onNewTaskSessionResolved,
+    onNewTaskSessionNotProjected,
   } = deps;
   const copy = getShellCopy(uiLocale).chatActions;
 
@@ -421,12 +426,20 @@ export function createAppShellChatActions(deps: {
     const initialNewTaskTarget = initialSessionId ? undefined : newTaskTarget;
     const sendOwner = captureComposerImportOwner();
     const newChatOwner = initialSessionId ? null : sendOwner;
-    if (!initialSessionId && !initialNewTaskTarget) return false;
-    if (!(await checkTaskSubmissionReadiness())) return false;
+    const isFirstSend = !initialSessionId;
+    if (!initialSessionId && !initialNewTaskTarget) {
+      onNewTaskSessionNotProjected?.();
+      return false;
+    }
+    if (!(await checkTaskSubmissionReadiness())) {
+      if (isFirstSend) onNewTaskSessionNotProjected?.();
+      return false;
+    }
     if (
       (initialSessionId && !isShellSurfaceOwnerActive(sendOwner)) ||
       (newChatOwner && !isNewChatSendSurfaceActive(newChatOwner))
     ) {
+      if (isFirstSend) onNewTaskSessionNotProjected?.();
       return false;
     }
     let optimisticSessionId: string | undefined;
@@ -500,6 +513,7 @@ export function createAppShellChatActions(deps: {
         if (activeIdRef.current !== session.id) {
           removeOptimisticUserMessage(session.id, messageId);
           await discardUnsentSession();
+          onNewTaskSessionNotProjected?.();
           return false;
         }
         if (exactTurn) armTurnActive(session.id, messageId);
@@ -538,11 +552,22 @@ export function createAppShellChatActions(deps: {
           isSurfaceVisible: () => activeIdRef.current === session.id,
         });
         if (submitted.kind === 'refused') {
+          onNewTaskSessionNotProjected?.();
           await discardUnsentSession();
           return false;
         }
+        if (submitted.kind === 'unreconciled') {
+          // The Host may have admitted the Message, but this client cannot
+          // prove the outcome yet. Keep the Session, but do not create a
+          // durable Work Board link from an unknown result.
+          onNewTaskSessionNotProjected?.();
+          unsentSessionId = undefined;
+          await refreshSessions();
+          return true;
+        }
         unsentSessionId = undefined;
         options.onSessionResolved?.(session.id);
+        onNewTaskSessionResolved?.(session.id);
         await refreshSessions();
         return true;
       }
@@ -632,6 +657,7 @@ export function createAppShellChatActions(deps: {
           })) ||
         (newChatOwner !== null && isNewChatSendSurfaceActive(newChatOwner));
       await discardUnsentSession();
+      if (isFirstSend) onNewTaskSessionNotProjected?.();
       if (optimisticSessionId && optimisticMessageId) {
         removeOptimisticUserMessage(optimisticSessionId, optimisticMessageId);
       }
