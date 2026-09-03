@@ -1545,7 +1545,11 @@ function AppShellContent({
     showModelSetupToast,
     toastApi,
   });
+  const workbarTaskClaimRef = useRef<{ onNewTaskSurfaceStarted: () => void } | null>(null);
   const openNewTaskSurface = useCallback(() => {
+    // A new task surface replaces the previous one, so any Work Board start
+    // claim bound to the previous surface is void.
+    workbarTaskClaimRef.current?.onNewTaskSurfaceStarted();
     imageNoticeLifecycle.reset(NEW_TASK_PENDING_KEY);
     startNewSession();
     // Only Plan resets: a new task starts out of Plan, in whatever
@@ -1658,6 +1662,9 @@ function AppShellContent({
     resolveWorkBoardTarget: taskEntry.commands.resolveWorkBoardTarget,
     prepareWorkBoardDraft: taskEntry.commands.prepareWorkBoardDraft,
   });
+  useLayoutEffect(() => {
+    workbarTaskClaimRef.current = workbar.commands;
+  }, [workbar.commands]);
 
   const exitWorkHub = useCallback(() => setWorkHubActive(false), []);
   const selectSessionSurface = useCallback(

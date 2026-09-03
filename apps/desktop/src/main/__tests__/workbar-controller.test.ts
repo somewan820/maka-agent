@@ -23,6 +23,7 @@ import { afterEach, describe, it } from 'node:test';
 import { act, createElement, StrictMode } from 'react';
 import type { ShellRunUpdate } from '@maka/core/events';
 import type { SessionSummary } from '@maka/core/session';
+import type { WorkBoardItem } from '@maka/core/work-board';
 import { LocaleProvider, type ToastApi } from '@maka/ui';
 import { cleanupFakeDom, installReactRenderer } from './fake-dom.js';
 import {
@@ -565,5 +566,148 @@ describe('useWorkbarController', () => {
     assert.equal(subscriptions, 1);
     assert.equal(disposals, 1);
     assert.deepEqual(activeSessions, ['a', 'b']);
+  });
+
+  function workBoardItem(id: string): WorkBoardItem {
+    return {
+      schemaVersion: 1,
+      id,
+      revision: 1,
+      scope: { kind: 'project', projectId: 'p1' },
+      title: 'Review auth',
+      state: 'todo',
+      creator: { kind: 'user' },
+      provenance: { kind: 'manual' },
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+    };
+  }
+
+  function startTaskInput(
+    base: UseWorkbarControllerInput,
+    extra: {
+      openNewTaskSurface?: () => void;
+      resolveWorkBoardTarget?: UseWorkbarControllerInput['resolveWorkBoardTarget'];
+    } = {},
+  ): UseWorkbarControllerInput {
+    return {
+      ...base,
+      resolveWorkBoardTarget:
+        extra.resolveWorkBoardTarget ??
+        (() => ({ ok: true, target: { profileId: 'profile-1', hostId: 'host-1', projectId: 'p1' } })),
+      prepareWorkBoardDraft: () => 'draft-key',
+      openNewTaskSurface: extra.openNewTaskSurface ?? (() => {}),
+    };
+  }
+
+  it('links the Session of the start-task surface and consumes the claim once', async () => {
+    const { root } = installReactRenderer();
+    const links: Array<{ id: string; sessionId: string }> = [];
+    const surfaces: string[] = [];
+    const services = createFakeWorkbarServices({
+      workBoard: {
+        linkSession: async (id, link) => {
+          links.push({ id, sessionId: link.sessionId });
+          return { ok: true as const, value: workBoardItem(id) };
+        },
+      },
+    });
+    const controllerInput = startTaskInput(input(session('a')), {
+      openNewTaskSurface: () => surfaces.push('opened'),
+    });
+
+    await act(async () => renderController(root, services, controllerInput));
+    await act(async () => controller().host.onStartWorkBoardTask?.(workBoardItem('item-1')));
+
+    assert.deepEqual(surfaces, ['opened']);
+    await act(async () =>
+      controller().commands.onNewTaskSessionResolved(JSON.stringify(['host-1', 'session-1'])),
+    );
+    assert.deepEqual(links, [{ id: 'item-1', sessionId: 'session-1' }]);
+
+    // The claim is consumed: a later resolve must not relink the item.
+    await act(async () =>
+      controller().commands.onNewTaskSessionResolved(JSON.stringify(['host-1', 'session-2'])),
+    );
+    assert.equal(links.length, 1);
+  });
+
+  it('does not link when a Session outcome clears the claim without resolving', async () => {
+    const { root } = installReactRenderer();
+    const links: Array<{ id: string; sessionId: string }> = [];
+    const services = createFakeWorkbarServices({
+      workBoard: {
+        linkSession: async (id, link) => {
+          links.push({ id, sessionId: link.sessionId });
+          return { ok: true as const, value: workBoardItem(id) };
+        },
+      },
+    });
+
+    await act(async () => renderController(root, services, startTaskInput(input(session('a')))));
+    await act(async () => controller().host.onStartWorkBoardTask?.(workBoardItem('item-1')));
+    await act(async () => controller().commands.onNewTaskSessionNotProjected());
+    await act(async () =>
+      controller().commands.onNewTaskSessionResolved(JSON.stringify(['host-1', 'session-1'])),
+    );
+
+    assert.equal(links.length, 0);
+  });
+
+  it('clears the claim when a new task surface replaces the start-task surface', async () => {
+    const { root } = installReactRenderer();
+    const links: Array<{ id: string; sessionId: string }> = [];
+    const services = createFakeWorkbarServices({
+      workBoard: {
+        linkSession: async (id, link) => {
+          links.push({ id, sessionId: link.sessionId });
+          return { ok: true as const, value: workBoardItem(id) };
+        },
+      },
+    });
+
+    await act(async () => renderController(root, services, startTaskInput(input(session('a')))));
+    await act(async () => controller().host.onStartWorkBoardTask?.(workBoardItem('item-1')));
+    await act(async () => controller().commands.onNewTaskSurfaceStarted());
+    await act(async () =>
+      controller().commands.onNewTaskSessionResolved(JSON.stringify(['host-1', 'session-1'])),
+    );
+
+    assert.equal(links.length, 0);
+  });
+
+  it('surfaces a failed link and still clears the claim', async () => {
+    const { root } = installReactRenderer();
+    const errors: string[] = [];
+    const links: Array<{ id: string; sessionId: string }> = [];
+    const services = createFakeWorkbarServices({
+      workBoard: {
+        linkSession: async (id, link) => {
+          links.push({ id, sessionId: link.sessionId });
+          return { ok: false as const, message: 'host unavailable' };
+        },
+      },
+    });
+
+    await act(async () =>
+      renderController(
+        root,
+        services,
+        startTaskInput(input(session('a'), createFakeToastApi(errors))),
+      ),
+    );
+    await act(async () => controller().host.onStartWorkBoardTask?.(workBoardItem('item-1')));
+    await act(async () =>
+      controller().commands.onNewTaskSessionResolved(JSON.stringify(['host-1', 'session-1'])),
+    );
+
+    assert.equal(links.length, 1);
+    assert.ok(errors.some((error) => error.includes('host unavailable')));
+    // Failed link must still release the claim so it cannot mis-link a later Session.
+    await act(async () =>
+      controller().commands.onNewTaskSessionResolved(JSON.stringify(['host-1', 'session-2'])),
+    );
+    assert.equal(links.length, 1);
   });
 });
